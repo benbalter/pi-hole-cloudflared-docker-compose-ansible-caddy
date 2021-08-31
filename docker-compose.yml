@@ -1,0 +1,101 @@
+version: "3"
+
+services:
+  cloudflared:
+    container_name: cloudflared
+    restart: unless-stopped
+    # Cloudflared doesn't have an armvf image, so we build from source
+    build: https://github.com/cloudflare/cloudflared.git
+    command: proxy-dns
+    environment:
+      # Replace with your Cloudflare Gateway domain or a public DNS over HTTPS server
+      TUNNEL_DNS_UPSTREAM: "https://XXX.cloudflare-gateway.com/dns-query"
+      TUNNEL_DNS_BOOTSTRAP: "https://1.1.1.2/dns-query"
+      TUNNEL_DNS_ADDRESS: "0.0.0.0"
+      TUNNEL_DNS_PORT: "53"
+
+    # I'm pretty sure cloudflared doesn't use the bootstrap server, so we define it here too
+    dns:
+      - 1.1.1.2
+      - 1.1.0.2
+    networks:
+      net:
+        ipv4_address: 10.0.0.2
+    healthcheck:
+      test: ["CMD", "cloudflared", "version"]
+
+  pihole:
+    container_name: pihole
+    restart: unless-stopped
+    image: pihole/pihole
+    secrets:
+      - pihole_web_password
+    environment: 
+      # Replace with your desired configuration
+      TZ: America/New_York
+      DNSSEC: "true"
+      DNS_BOGUS_PRIV: "true"
+      DNS_FQDN_REQUIRED: "true"
+      TEMPERATUREUNIT: f
+      PIHOLE_DNS_: "10.0.0.2"
+      WEBPASSWORD_FILE: /run/secrets/pihole_web_password
+      REV_SERVER: "true"
+      REV_SERVER_TARGET: "192.168.1.1"
+      REV_SERVER_CIDR: "192.168.0.0/16"
+      VIRTUAL_HOST: dns.example.com
+    ports: 
+      - "53:53/tcp"
+      - "53:53/udp"
+    volumes:
+      - './etc-pihole/:/etc/pihole/'
+      - './etc-dnsmasq.d/:/etc/dnsmasq.d/'
+    networks:
+      net:
+        ipv4_address: 10.0.0.3
+    dns:
+      - "10.0.0.2"
+    depends_on:
+      - cloudflared
+    healthcheck:
+      test: ["CMD", "dig", "+norecurse", "+retry=0", "@127.0.0.1", "pi.hole"]
+  caddy:
+    build:
+      context: .
+      dockerfile: caddy.Dockerfile
+    container_name: caddy
+    restart: unless-stopped
+    ports:
+      - "80:80" # For HTTP -> HTTPS redirects
+      - "443:443"
+    volumes:
+      - $PWD/Caddyfile:/etc/caddy/Caddyfile
+      - caddy_data:/data
+      - caddy_config:/config
+    env_file:
+      - .caddy.env
+    dns:
+      - 1.0.0.3
+    healthcheck:
+        test: ["CMD", "caddy", "version"]
+    depends_on:
+      - pihole
+      - cloudflared
+    networks:
+      net: {}
+
+volumes:
+  caddy_data:
+    external: true
+  caddy_config:
+
+networks:
+  net:
+    driver: bridge
+    ipam:
+     config:
+       - subnet: 10.0.0.0/29
+
+# PiHole Web password lives in a .pihole_web_password to keep it out of the config
+secrets:
+  pihole_web_password: 
+    file: .pihole_web_password
