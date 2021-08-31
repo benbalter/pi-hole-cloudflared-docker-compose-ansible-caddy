@@ -1,0 +1,199 @@
+- hosts: all
+  tasks:
+    # Allows you to SSH in to the PiHole via SSH, instead of password auth, pulling from your GitHub Public key
+    - name: Ensure SSH Key is authorized
+      authorized_key:
+        user: pi
+        state: present
+        key: https://github.com/benbalter.keys
+
+    # Ensure PiHole password is not the default
+    # Here I'm using 1Password as my secret store, but you could use another source
+    - name: Change pi user password
+      become: true
+      user:
+        name: pi
+        update_password: always
+        password: "{{ lookup('community.general.onepassword', 'PiHole', field='Pi@ login') | password_hash('sha512') }}"
+    
+    # Update system-level dependencies
+    - name: update and upgrade apt packages
+      become: true
+      apt:
+        upgrade: dist
+        update_cache: true
+        
+    # Set Static IP of PiHole so other devices can query it for DNS lookups
+    - name: Install network manager
+      become: true
+      apt:
+        name: network-manager
+        state: present
+    - name: configure network
+      become: true
+      community.general.nmcli:
+        state: present
+        conn_name: eth0
+        ifname: eth0
+        type: ethernet
+        ip4: 192.168.1.2/24
+        gw4: 192.168.1.1
+        dns4:
+          - 1.1.1.2
+          
+    # A deploy key allows you to pull (or push) from a private GitHub repo
+    - name: Ensure deploy key is present
+      community.crypto.openssh_keypair:
+        path: "~/.ssh/id_github"
+        type: ed25519
+      register: deploy_key
+
+    # If a new deploy key is generated, authorize it for the repo
+    # I'm using 1Password as my secret store, but you could use another source
+    - name: Ensure deploy key is authorized
+      community.general.github_deploy_key:
+        key: "{{ deploy_key.public_key }}"
+        name: Raspberry Pi
+        state: present
+        owner: benbalter
+        repo: pi-hole
+        token: "{{ lookup('community.general.onepassword', 'PiHole', field='GitHub Token') }}"
+    
+    - name: Install docker dependencies
+      become: true
+      apt:
+        name: "{{ item }}"
+        state: present
+        update_cache: true
+      loop:
+        - apt-transport-https
+        - ca-certificates
+        - curl
+        - gnupg
+        - lsb-release
+        - python3-pip
+        - python3-setuptools
+    - name: add Docker GPG key
+      become: true
+      apt_key:
+        url: https://download.docker.com/linux/debian/gpg
+        state: present
+    - name: add docker repository to apt
+      become: true
+      apt_repository:
+        repo: deb [arch=armhf signed-by=/usr/share/keyrings/docker-archive-keyring.gpg] https://download.docker.com/linux/debian buster stable
+        state: present
+    - name: install docker
+      become: true
+      apt:
+        name: "{{ item }}"
+        state: present
+      loop:
+        - docker-ce
+        - docker-ce-cli
+        - containerd.io
+    - name: Add user to docker group
+      become: true
+      user:
+        name: pi
+        groups: docker
+        append: true
+    - name: Enable & Start Docker service
+      become: true
+      service:
+        name: docker
+        enabled: true
+        state: started
+    - name: Install pip components
+      pip:
+        executable: pip3
+        name:
+          - docker
+          - docker-compose
+          - virtualenv
+
+    # I version my config in a private Git Repo, so I clone it down using the deploy key
+    # Note: This will not work without modification, as it's a private repo
+    - name: Clone GitHub repo
+      git:
+        repo: git@github.com:benbalter/pi-hole.git
+        dest: /home/pi/pi-hole/
+        clone: true
+        update: true
+        key_file: ~/.ssh/id_github
+        accept_hostkey: true
+        
+    # Automatically upgrade apt packages
+    - name: install unattended upgrades
+      become: true
+      apt:
+        name: unattended-upgrades
+        state: present
+    - name: Setup unattended upgrades
+      debconf:
+        name: unattended-upgrades
+        question: unattended-upgrades/enable_auto_updates
+        vtype: boolean
+        value: "true"
+
+    # Prevents SSH brute force attacks
+    - name: install fail2ban
+      become: true
+      apt:
+        name: fail2ban
+        state: present
+
+    # Installs firewall
+    - name: install ufw
+      become: true
+      apt:
+        name: ufw
+        state: present
+
+    # Rate limits SSH attempts
+    - name: limit ssh
+      become: true
+      community.general.ufw:
+        rule: limit
+        port: ssh
+        proto: tcp
+
+    # Firewall rules
+    - name: Allow all access to SSH, DNS, and WWW
+      become: true
+      community.general.ufw:
+        rule: allow
+        port: '{{ item }}'
+      loop:
+        - SSH
+        - DNS
+        - WWW
+        - WWW Secure
+    - name: enable ufw and default to deny
+      become: true
+      ufw:
+        state: enabled
+        default: deny
+    
+    # Set PiHole (Web Admin) password, referenced above. 
+    # I'm using 1Password, but you could use any secret store.
+    - name: Set Pi-Hole secret
+      copy:
+        dest: /home/pi/pi-hole/.pihole_web_password
+        content: "{{ lookup('community.general.onepassword', 'Raspberry pi', field='password') }}"
+        
+    - name: Set Caddy secret
+      copy:
+        dest: /home/pi/pi-hole/.caddy.env
+        # I'm using 1Password here, but you could use any secret store you wanted
+        content: "CLOUDFLARE_API_TOKEN={{ lookup('community.general.onepassword', 'Raspberry pi', field='Cloudflare Token') }}"
+    
+    - name: Create and start docker compose services
+      community.docker.docker_compose:
+        # Change to path to your docker-compose.yml. See below for how to clone a repo
+        project_src: /home/pi/pi-hole
+        pull: true
+        build: true
+        remove_orphans: true
+      register: output
+  
