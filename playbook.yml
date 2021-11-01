@@ -163,7 +163,7 @@
       become: true
       community.general.ufw:
         rule: allow
-        port: '{{ item }}'
+        app: '{{ item }}'
       loop:
         - SSH
         - DNS
