@@ -40,7 +40,12 @@
         gw4: 192.168.1.1
         dns4:
           - 1.1.1.2
-          
+    
+    # Ensure timestamps are in my local timezone
+    - name: set timezone
+      community.general.timezone:
+        name: America/New_York
+        
     # A deploy key allows you to pull (or push) from a private GitHub repo
     - name: Ensure deploy key is present
       community.crypto.openssh_keypair:
@@ -142,7 +147,19 @@
       apt:
         name: fail2ban
         state: present
-
+    
+    # Install and enable NTP to ensure the clock remains accurate
+    - name: install ntp
+      become: true
+      apt:
+        name: ntp
+        state: present
+    - name: enable ntp
+      service:
+        name: ntp
+        state: started
+        enabled: true
+        
     # Installs firewall
     - name: install ufw
       become: true
@@ -187,7 +204,8 @@
         dest: /home/pi/pi-hole/.caddy.env
         # I'm using 1Password here, but you could use any secret store you wanted
         content: "CLOUDFLARE_API_TOKEN={{ lookup('community.general.onepassword', 'Raspberry pi', field='Cloudflare Token') }}"
-    
+        mode: 0700
+
     - name: Create and start docker compose services
       community.docker.docker_compose:
         # Change to path to your docker-compose.yml. See below for how to clone a repo
