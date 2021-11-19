@@ -43,6 +43,7 @@
     
     # Ensure timestamps are in my local timezone
     - name: set timezone
+      become: true
       community.general.timezone:
         name: America/New_York
         
