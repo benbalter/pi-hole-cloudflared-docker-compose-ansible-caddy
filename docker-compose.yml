@@ -4,8 +4,7 @@ services:
   cloudflared:
     container_name: cloudflared
     restart: unless-stopped
-    # Cloudflared doesn't have an armvf image, so we build from source
-    build: https://github.com/cloudflare/cloudflared.git
+    image: cloudflare/cloudflared:latest
     command: proxy-dns
     environment:
       # Replace with your Cloudflare Gateway domain or a public DNS over HTTPS server
@@ -30,7 +29,7 @@ services:
     image: pihole/pihole
     secrets:
       - pihole_web_password
-    environment: 
+    environment:
       # Replace with your desired configuration
       TZ: America/New_York
       DNSSEC: "true"
@@ -43,7 +42,7 @@ services:
       REV_SERVER_TARGET: "192.168.1.1"
       REV_SERVER_CIDR: "192.168.0.0/16"
       VIRTUAL_HOST: dns.example.com
-    ports: 
+    ports:
       - "53:53/tcp"
       - "53:53/udp"
     volumes:
@@ -76,7 +75,7 @@ services:
     dns:
       - 1.0.0.3
     healthcheck:
-        test: ["CMD", "caddy", "version"]
+      test: ["CMD", "caddy", "version"]
     depends_on:
       - pihole
       - cloudflared
@@ -92,10 +91,10 @@ networks:
   net:
     driver: bridge
     ipam:
-     config:
-       - subnet: 10.0.0.0/29
+      config:
+        - subnet: 10.0.0.0/29
 
 # PiHole Web password lives in a .pihole_web_password to keep it out of the config
 secrets:
-  pihole_web_password: 
+  pihole_web_password:
     file: .pihole_web_password
