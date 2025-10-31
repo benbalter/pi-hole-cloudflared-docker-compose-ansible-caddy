@@ -4,13 +4,7 @@ services:
   cloudflared:
     container_name: cloudflared
     restart: unless-stopped
-    # NOTE: Building from source can take 10-20 minutes on ARM devices.
-    # For faster deployment, consider using a pre-built image like:
-    # image: cloudflare/cloudflared:latest
-    # However, the official cloudflare/cloudflared image only supports amd64 and arm64v8.
-    # Older Raspberry Pi models (Zero, 1, 2) use armv6/armv7 and require building from source.
-    # For Pi 3B+ and newer (arm64v8), the pre-built image works and deploys in seconds.
-    build: https://github.com/cloudflare/cloudflared.git
+    image: cloudflare/cloudflared:latest
     command: proxy-dns
     environment:
       # Replace with your Cloudflare Gateway domain or a public DNS over HTTPS server
