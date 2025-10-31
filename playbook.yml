@@ -15,14 +15,14 @@
         name: pi
         update_password: always
         password: "{{ lookup('community.general.onepassword', 'PiHole', field='Pi@ login') | password_hash('sha512') }}"
-    
+
     # Update system-level dependencies
     - name: update and upgrade apt packages
       become: true
       apt:
         upgrade: dist
         update_cache: true
-        
+
     # Set Static IP of PiHole so other devices can query it for DNS lookups
     - name: Install network manager
       become: true
@@ -40,13 +40,13 @@
         gw4: 192.168.1.1
         dns4:
           - 1.1.1.2
-    
+
     # Ensure timestamps are in my local timezone
     - name: set timezone
       become: true
       community.general.timezone:
         name: America/New_York
-        
+
     # A deploy key allows you to pull (or push) from a private GitHub repo
     - name: Ensure deploy key is present
       community.crypto.openssh_keypair:
@@ -64,21 +64,20 @@
         owner: benbalter
         repo: pi-hole
         token: "{{ lookup('community.general.onepassword', 'PiHole', field='GitHub Token') }}"
-    
+
     - name: Install docker dependencies
       become: true
       apt:
-        name: "{{ item }}"
+        name:
+          - apt-transport-https
+          - ca-certificates
+          - curl
+          - gnupg
+          - lsb-release
+          - python3-pip
+          - python3-setuptools
         state: present
         update_cache: true
-      loop:
-        - apt-transport-https
-        - ca-certificates
-        - curl
-        - gnupg
-        - lsb-release
-        - python3-pip
-        - python3-setuptools
     - name: add Docker GPG key
       become: true
       apt_key:
@@ -87,17 +86,18 @@
     - name: add docker repository to apt
       become: true
       apt_repository:
-        repo: deb [arch=armhf signed-by=/usr/share/keyrings/docker-archive-keyring.gpg] https://download.docker.com/linux/debian buster stable
+        repo: >-
+          deb [arch=armhf signed-by=/usr/share/keyrings/docker-archive-keyring.gpg]
+          https://download.docker.com/linux/debian buster stable
         state: present
     - name: install docker
       become: true
       apt:
-        name: "{{ item }}"
+        name:
+          - docker-ce
+          - docker-ce-cli
+          - containerd.io
         state: present
-      loop:
-        - docker-ce
-        - docker-ce-cli
-        - containerd.io
     - name: Add user to docker group
       become: true
       user:
@@ -128,7 +128,7 @@
         update: true
         key_file: ~/.ssh/id_github
         accept_hostkey: true
-        
+
     # Automatically upgrade apt packages
     - name: install unattended upgrades
       become: true
@@ -148,7 +148,7 @@
       apt:
         name: fail2ban
         state: present
-    
+
     # Install and enable NTP to ensure the clock remains accurate
     - name: install ntp
       become: true
@@ -160,7 +160,7 @@
         name: ntp
         state: started
         enabled: true
-        
+
     # Installs firewall
     - name: install ufw
       become: true
@@ -181,38 +181,39 @@
       become: true
       community.general.ufw:
         rule: allow
-        app: '{{ item }}'
+        port: '{{ item }}'
       loop:
-        - SSH
-        - DNS
-        - WWW
-        - WWW Secure
+        - '22'    # SSH
+        - '53'    # DNS
+        - '80'    # WWW
+        - '443'   # WWW Secure
     - name: enable ufw and default to deny
       become: true
       ufw:
         state: enabled
         default: deny
-    
-    # Set PiHole (Web Admin) password, referenced above. 
+
+    # Set PiHole (Web Admin) password, referenced above.
     # I'm using 1Password, but you could use any secret store.
     - name: Set Pi-Hole secret
       copy:
         dest: /home/pi/pi-hole/.pihole_web_password
         content: "{{ lookup('community.general.onepassword', 'Raspberry pi', field='password') }}"
-        
+
     - name: Set Caddy secret
       copy:
         dest: /home/pi/pi-hole/.caddy.env
         # I'm using 1Password here, but you could use any secret store you wanted
-        content: "CLOUDFLARE_API_TOKEN={{ lookup('community.general.onepassword', 'Raspberry pi', field='Cloudflare Token') }}"
+        content: >-
+          CLOUDFLARE_API_TOKEN={{ lookup('community.general.onepassword',
+          'Raspberry pi', field='Cloudflare Token') }}
         mode: 0700
 
     - name: Create and start docker compose services
-      community.docker.docker_compose:
+      community.docker.docker_compose_v2:
         # Change to path to your docker-compose.yml. See below for how to clone a repo
         project_src: /home/pi/pi-hole
-        pull: true
-        build: true
+        pull: always
+        build: always
         remove_orphans: true
       register: output
-  
