@@ -1,101 +1,94 @@
-version: "3"
+# AdGuard Home answers DNS for the LAN, sending queries upstream over
+# DNS-over-HTTPS. Caddy serves AdGuard's admin UI over HTTPS, with a
+# certificate from Let's Encrypt via a Cloudflare DNS-01 challenge.
+
+x-logging: &default-logging
+  driver: json-file
+  options:
+    max-size: "10m"
+    max-file: "3"
+
+x-common: &common
+  restart: unless-stopped
+  logging: *default-logging
+  security_opt:
+    - no-new-privileges:true
 
 services:
-  cloudflared:
-    container_name: cloudflared
-    restart: unless-stopped
-    # Cloudflared doesn't have an armvf image, so we build from source
-    build: https://github.com/cloudflare/cloudflared.git
-    command: proxy-dns
-    environment:
-      # Replace with your Cloudflare Gateway domain or a public DNS over HTTPS server
-      TUNNEL_DNS_UPSTREAM: "https://XXX.cloudflare-gateway.com/dns-query"
-      TUNNEL_DNS_BOOTSTRAP: "https://1.1.1.2/dns-query"
-      TUNNEL_DNS_ADDRESS: "0.0.0.0"
-      TUNNEL_DNS_PORT: "53"
-
-    # I'm pretty sure cloudflared doesn't use the bootstrap server, so we define it here too
-    dns:
-      - 1.1.1.2
-      - 1.0.0.2
-    networks:
-      net:
-        ipv4_address: 10.0.0.2
-    healthcheck:
-      test: ["CMD", "cloudflared", "version"]
-
-  pihole:
-    container_name: pihole
-    restart: unless-stopped
-    image: pihole/pihole
-    secrets:
-      - pihole_web_password
-    environment: 
-      # Replace with your desired configuration
-      TZ: America/New_York
-      DNSSEC: "true"
-      DNS_BOGUS_PRIV: "true"
-      DNS_FQDN_REQUIRED: "true"
-      TEMPERATUREUNIT: f
-      PIHOLE_DNS_: "10.0.0.2"
-      WEBPASSWORD_FILE: /run/secrets/pihole_web_password
-      REV_SERVER: "true"
-      REV_SERVER_TARGET: "192.168.1.1"
-      REV_SERVER_CIDR: "192.168.0.0/16"
-      VIRTUAL_HOST: dns.example.com
-    ports: 
-      - "53:53/tcp"
-      - "53:53/udp"
+  adguardhome:
+    <<: *common
+    container_name: adguardhome
+    image: adguard/adguardhome:latest
+    mem_limit: 768m
+    # Published on IPv4 only. Docker forwards IPv4 with NAT, which keeps the
+    # client's real address, so allowed_clients in AdGuardHome.yaml can check
+    # it. IPv6 goes through Docker's userland proxy, and every client would
+    # appear to come from the bridge network's private address.
+    ports:
+      # DNS_PORT lets CI run alongside systemd-resolved; leave it unset on the Pi.
+      - "0.0.0.0:${DNS_PORT:-53}:53/tcp"
+      - "0.0.0.0:${DNS_PORT:-53}:53/udp"
     volumes:
-      - './etc-pihole/:/etc/pihole/'
-      - './etc-dnsmasq.d/:/etc/dnsmasq.d/'
-    networks:
-      net:
-        ipv4_address: 10.0.0.3
-    dns:
-      - "10.0.0.2"
-    depends_on:
-      - cloudflared
+      # adguard-conf/AdGuardHome.yaml is copied from AdGuardHome.example.yaml
+      # by the playbook on first run. AdGuard rewrites it when you change
+      # settings in the UI.
+      - ./adguard-conf:/opt/adguardhome/conf
+      - ./adguard-work:/opt/adguardhome/work
+    tmpfs:
+      - /tmp
     healthcheck:
-      test: ["CMD", "dig", "+norecurse", "+retry=0", "@127.0.0.1", "pi.hole"]
+      # Answered from AdGuard's hosts file, so it doesn't depend on the upstream.
+      test: ["CMD-SHELL", "nslookup localhost 127.0.0.1 >/dev/null || exit 1"]
+      interval: 30s
+      timeout: 5s
+      retries: 3
+      start_period: 10s
+    networks:
+      - net
+
   caddy:
+    <<: *common
+    container_name: caddy
+    # Stock Caddy can't do the Cloudflare DNS-01 challenge, so build it with
+    # the caddy-dns/cloudflare module.
     build:
       context: .
       dockerfile: caddy.Dockerfile
-    container_name: caddy
-    restart: unless-stopped
+      # Rebuild on a fresh caddy:2 base, not a stale cached one.
+      pull: true
+    mem_limit: 128m
+    # IPv4 only, for the same reason as AdGuard: the Caddyfile's LAN-only
+    # check needs the client's real address.
     ports:
-      - "80:80" # For HTTP -> HTTPS redirects
-      - "443:443"
+      - "0.0.0.0:80:80"
+      - "0.0.0.0:443:443"
     volumes:
-      - $PWD/Caddyfile:/etc/caddy/Caddyfile
+      - ./Caddyfile:/etc/caddy/Caddyfile:ro
       - caddy_data:/data
       - caddy_config:/config
+    tmpfs:
+      - /tmp
+    # Holds CLOUDFLARE_API_TOKEN; the playbook writes it with mode 0600.
     env_file:
       - .caddy.env
-    dns:
-      - 1.0.0.3
-    healthcheck:
-        test: ["CMD", "caddy", "version"]
     depends_on:
-      - pihole
-      - cloudflared
+      adguardhome:
+        condition: service_healthy
+    healthcheck:
+      test: ["CMD-SHELL", "wget -q -O /dev/null http://127.0.0.1:2019/config/ || exit 1"]
+      interval: 30s
+      timeout: 5s
+      retries: 3
+      start_period: 15s
     networks:
-      net: {}
+      - net
 
 volumes:
+  # Caddy's certificates and ACME account. A named volume keeps them across
+  # `docker compose down`, so a redeploy doesn't hit Let's Encrypt rate limits.
   caddy_data:
-    external: true
   caddy_config:
 
 networks:
   net:
     driver: bridge
-    ipam:
-     config:
-       - subnet: 10.0.0.0/29
-
-# PiHole Web password lives in a .pihole_web_password to keep it out of the config
-secrets:
-  pihole_web_password: 
-    file: .pihole_web_password
