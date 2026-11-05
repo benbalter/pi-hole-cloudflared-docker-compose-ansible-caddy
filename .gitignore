@@ -1,0 +1,11 @@
+# Secrets
+.caddy.env
+playbook.env
+
+# Your inventory (copy hosts.example.yml)
+hosts.yml
+
+# AdGuard's live config and data. The playbook creates AdGuardHome.yaml from
+# AdGuardHome.example.yaml, and AdGuard rewrites it as you change settings.
+adguard-conf/AdGuardHome.yaml
+adguard-work/

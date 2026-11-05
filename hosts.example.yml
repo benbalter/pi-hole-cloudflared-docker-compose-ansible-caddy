@@ -1,9 +1,15 @@
 all:
   hosts:
+    # The Pi's LAN address. Give it a fixed IP (a DHCP reservation on your
+    # router), since every device will use it for DNS.
     192.168.1.2:
+      # The user you created in Raspberry Pi Imager.
       ansible_user: pi
       ansible_python_interpreter: auto
       # GitHub user whose public SSH keys (github.com/USER.keys) get access to the Pi
       github_user: YOUR-GITHUB-USERNAME
-      # Private repo holding your config, as OWNER/NAME
-      config_repo: YOUR-GITHUB-USERNAME/pi-hole
+      # Your private copy of this repo, as OWNER/NAME
+      config_repo: YOUR-GITHUB-USERNAME/home-dns
+      # Optional overrides (defaults are in playbook.yml):
+      # timezone: America/Chicago
+      # reboot_time: "04:00"

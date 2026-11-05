@@ -1,0 +1,92 @@
+# AdGuard Home starting config. The playbook copies this to AdGuardHome.yaml
+# on first run only, so changes you make in the web UI aren't overwritten.
+# Any setting left out here keeps AdGuard's default.
+http:
+  # Not published to the host; Caddy proxies to it (see Caddyfile).
+  address: 0.0.0.0:80
+  session_ttl: 30d
+users:
+  - name: admin
+    # The playbook swaps this placeholder for PI_ADGUARD_ADMIN_HASH, a bcrypt
+    # hash: `htpasswd -nbB -C 10 admin 'your-password' | cut -d: -f2`
+    password: ADGUARD_ADMIN_PASSWORD_HASH
+auth_attempts: 5
+block_auth_min: 15
+dns:
+  bind_hosts:
+    - 0.0.0.0
+  port: 53
+  # Upstream resolvers, queried over DNS-over-HTTPS so your ISP can't read or
+  # rewrite them. This is Cloudflare's malware-blocking resolver. To use a
+  # Cloudflare Zero Trust Gateway location instead, replace it with
+  # https://<your-location-id>.cloudflare-gateway.com/dns-query
+  upstream_dns:
+    - https://security.cloudflare-dns.com/dns-query
+  # Plain DNS, used only to look up the DoH hostnames above.
+  bootstrap_dns:
+    - 1.1.1.2
+    - 9.9.9.9
+  fallback_dns:
+    - https://dns.quad9.net/dns-query
+  upstream_mode: load_balance
+  # Only answer clients on private networks, so an accidentally forwarded
+  # port 53 can't turn this into an open resolver. Docker-published ports
+  # bypass ufw, so this is the check that actually holds.
+  allowed_clients:
+    - 10.0.0.0/8
+    - 172.16.0.0/12
+    - 192.168.0.0/16
+    - 127.0.0.0/8
+  refuse_any: true
+  ratelimit: 0
+  # Caddy reaches AdGuard over the Docker bridge network.
+  trusted_proxies:
+    - 127.0.0.0/8
+    - 172.16.0.0/12
+  enable_dnssec: true
+  cache_enabled: true
+  cache_size: 8388608
+  cache_ttl_min: 300
+  cache_ttl_max: 86400
+  # Serve a stale answer immediately and refresh it in the background.
+  cache_optimistic: true
+  hostsfile_enabled: true
+  # To show device names instead of IPs in the query log, set this to true
+  # and list your router as a reverse-DNS upstream:
+  # local_ptr_upstreams:
+  #   - <your router's LAN IP>
+  use_private_ptr_resolvers: false
+filters:
+  - enabled: true
+    url: https://gitlab.com/hagezi/mirror/-/raw/main/dns-blocklists/adblock/pro.txt
+    name: HaGeZi Pro
+    id: 1
+  - enabled: true
+    url: https://gitlab.com/hagezi/mirror/-/raw/main/dns-blocklists/adblock/tif.txt
+    name: HaGeZi Threat Intelligence Feeds
+    id: 2
+  - enabled: true
+    # Stops devices from bypassing AdGuard with their own encrypted DNS.
+    url: https://gitlab.com/hagezi/mirror/-/raw/main/dns-blocklists/adblock/doh.txt
+    name: HaGeZi Encrypted DNS/DoH Bypass
+    id: 3
+whitelist_filters:
+  - enabled: true
+    url: https://raw.githubusercontent.com/hagezi/dns-blocklists/main/adblock/whitelist-referral.txt
+    name: HaGeZi Referral Allowlist
+    id: 4
+filtering:
+  blocking_mode: null_ip
+  filters_update_interval: 24
+  filtering_enabled: true
+  protection_enabled: true
+  # Checks domains against AdGuard's malware list by sending hash prefixes to
+  # AdGuard's servers. Turn it off to keep every lookup with your upstream.
+  safebrowsing_enabled: true
+  # Point your admin hostname at the Pi, e.g.
+  # rewrites:
+  #   - domain: dns.example.com
+  #     answer: <the Pi's LAN IP>
+  #     enabled: true
+  rewrites: []
+schema_version: 34

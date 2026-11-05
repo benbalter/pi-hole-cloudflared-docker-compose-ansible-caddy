@@ -1,12 +1,49 @@
-dns.example.com
-
-reverse_proxy 10.0.0.3:80
-
-tls you@example.com {
-  # I use cloudflare here for DNS, but you can use any provider
-  dns cloudflare {env.CLOUDFLARE_API_TOKEN}
-  resolvers 10.0.0.3
+{
+	# Let's Encrypt sends certificate expiry notices here.
+	email you@example.com
+	servers {
+		timeouts {
+			read_body 10s
+			read_header 5s
+			write 30s
+			idle 120s
+		}
+	}
 }
 
-# Not necessary, but built-in compression can speed things up a bit
-encode zstd gzip
+(cloudflare_tls) {
+	tls {
+		# Any caddy-dns provider works; Cloudflare is what caddy.Dockerfile builds in.
+		dns cloudflare {env.CLOUDFLARE_API_TOKEN}
+		# Caddy's own propagation check depends on lookups through the Pi's
+		# resolver, which is AdGuard, and AdGuard's cache can hold a stale
+		# answer longer than the check waits. Skip the self-check and give
+		# Cloudflare a moment instead; the CA checks Cloudflare directly.
+		propagation_timeout -1
+		propagation_delay 60s
+	}
+}
+
+(security_headers) {
+	header {
+		Strict-Transport-Security "max-age=63072000; includeSubDomains"
+		X-Content-Type-Options "nosniff"
+		X-Frame-Options "SAMEORIGIN"
+		Referrer-Policy "strict-origin-when-cross-origin"
+		-Server
+	}
+}
+
+# AdGuard Home's admin UI. Replace with a hostname in a Cloudflare zone you
+# control, and point it at the Pi (a DNS rewrite in AdGuard works).
+dns.example.com {
+	import cloudflare_tls
+	import security_headers
+	encode zstd gzip
+
+	# The admin UI is for your network only, even if 80/443 get forwarded.
+	@outside not remote_ip private_ranges
+	respond @outside 403
+
+	reverse_proxy adguardhome:80
+}

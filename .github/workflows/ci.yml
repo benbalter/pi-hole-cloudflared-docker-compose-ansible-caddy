@@ -1,0 +1,69 @@
+name: CI
+
+on:
+  push:
+    branches: [main]
+  pull_request:
+
+concurrency:
+  group: ${{ github.workflow }}-${{ github.ref }}
+  cancel-in-progress: true
+
+permissions:
+  contents: read
+
+jobs:
+  test:
+    runs-on: ubuntu-latest
+    env:
+      # systemd-resolved holds port 53 on the runner.
+      DNS_PORT: "5053"
+    steps:
+      - uses: actions/checkout@v7
+
+      - name: Stand in for the files the playbook writes on the Pi
+        run: |
+          cp adguard-conf/AdGuardHome.example.yaml adguard-conf/AdGuardHome.yaml
+          touch .caddy.env
+
+      - name: Validate docker-compose.yml
+        run: docker compose config --quiet
+
+      - name: Build Caddy and validate the Caddyfile
+        run: |
+          docker compose build caddy
+          docker compose run --rm --no-deps --entrypoint caddy caddy \
+            adapt --config /etc/caddy/Caddyfile --adapter caddyfile > /dev/null
+
+      - name: Start AdGuard Home
+        run: docker compose up -d --wait --wait-timeout 120 adguardhome
+
+      - name: Resolve through AdGuard over DoH, with DNSSEC
+        run: |
+          for i in $(seq 1 10); do
+            out=$(dig example.com @127.0.0.1 -p "$DNS_PORT" +dnssec +time=5 +tries=1) && grep -q 'status: NOERROR' <<<"$out" && break
+            sleep 3
+          done
+          echo "$out"
+          grep -q 'status: NOERROR' <<<"$out"
+          grep -Eq 'flags:[^;]* ad[ ;]' <<<"$out"
+
+      - name: AdGuard logs
+        if: always()
+        run: docker compose logs adguardhome
+
+      - uses: actions/setup-python@v7
+        with:
+          python-version: "3.x"
+
+      - name: Install Ansible
+        run: |
+          pip install ansible-core ansible-lint
+          ansible-galaxy install -r requirements.yml
+          ansible-galaxy collection install -r requirements.yml
+
+      - name: Check playbook syntax
+        run: ansible-playbook --syntax-check -i hosts.example.yml playbook.yml
+
+      - name: Lint playbook
+        run: ansible-lint playbook.yml requirements.yml
