@@ -1,11 +1,22 @@
 - hosts: all
   tasks:
+    # Set github_user (and config_repo) in your inventory. There's deliberately
+    # no default: a default username would authorize someone else's SSH keys.
+    - name: Ensure required variables are set
+      assert:
+        that:
+          - github_user is defined and github_user | length > 0
+          - config_repo is defined and config_repo | length > 0
+        fail_msg: >-
+          Set github_user (whose public SSH keys to authorize) and config_repo
+          (your private config repo, as OWNER/NAME) in hosts.yml. See hosts.example.yml.
+
     # Allows you to SSH in to the PiHole via SSH, instead of password auth, pulling from your GitHub Public key
     - name: Ensure SSH Key is authorized
       authorized_key:
         user: pi
         state: present
-        key: https://github.com/benbalter.keys
+        key: "https://github.com/{{ github_user }}.keys"
 
     # Ensure PiHole password is not the default
     # Here I'm using 1Password as my secret store, but you could use another source
@@ -61,8 +72,8 @@
         key: "{{ deploy_key.public_key }}"
         name: Raspberry Pi
         state: present
-        owner: benbalter
-        repo: pi-hole
+        owner: "{{ config_repo.split('/')[0] }}"
+        repo: "{{ config_repo.split('/')[1] }}"
         token: "{{ lookup('community.general.onepassword', 'PiHole', field='GitHub Token') }}"
     
     - name: Install docker dependencies
@@ -122,7 +133,7 @@
     # Note: This will not work without modification, as it's a private repo
     - name: Clone GitHub repo
       git:
-        repo: git@github.com:benbalter/pi-hole.git
+        repo: "git@github.com:{{ config_repo }}.git"
         dest: /home/pi/pi-hole/
         clone: true
         update: true

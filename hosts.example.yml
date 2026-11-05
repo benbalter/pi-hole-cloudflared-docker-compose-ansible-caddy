@@ -3,3 +3,7 @@ all:
     192.168.1.2:
       ansible_user: pi
       ansible_python_interpreter: auto
+      # GitHub user whose public SSH keys (github.com/USER.keys) get access to the Pi
+      github_user: YOUR-GITHUB-USERNAME
+      # Private repo holding your config, as OWNER/NAME
+      config_repo: YOUR-GITHUB-USERNAME/pi-hole
